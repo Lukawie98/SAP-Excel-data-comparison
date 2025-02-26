@@ -1,0 +1,217 @@
+Function ChooseFile() As Workbook
+    Dim filex As String
+    filex = Application.GetOpenFilename("Pliki Excel (*.xls; *.xlsx), *.xls; *.xlsx", Title:="Choose file:")
+    If filex <> "False" And filex <> "" Then
+        Set ChooseFile = Workbooks.Open(filex)
+    Else
+        MsgBox "No file selected"
+        Set ChooseFile = Nothing
+    End If
+End Function
+
+Sub formulas()
+    With Range("K7")
+        .Formula = "=VLOOKUP(CONCAT(LEFT(A7,4),B7),Mapping!A:I,9,FALSE)"
+        .Offset(0, 1).Formula = "=VLOOKUP(K7,'F970'!B:E,4,FALSE)"
+        .Offset(0, 2).Formula = "=G7-L7"
+        .Offset(0, 3).Formula = "=IFERROR(VLOOKUP(CONCAT(LEFT(A7,4),B7),'Not Created in IHC'!A:L,12,FALSE),""No"")"
+    End With
+End Sub
+
+Sub copyData(wb1 As Workbook, wb2 As Workbook)
+    Dim lastRow As Long
+    lastRow = wb2.Sheets(1).Cells(wb2.Sheets(1).Rows.Count, "A").End(xlUp).Row
+    
+    With wb1.Sheets(1)
+        .Range("A7:J" & lastRow).ClearContents
+        wb2.Sheets(1).Range("A7:J" & lastRow).copy
+        .Range("A7").PasteSpecial Paste:=xlPasteAll
+    End With
+    
+    Application.CutCopyMode = False
+End Sub
+
+Sub copyTitle(wb1 As Workbook, wb2 As Workbook)
+    With wb1.Sheets(1)
+        .Range("2:4").UnMerge
+        .Range("A2:A4").ClearContents
+        wb2.Sheets(1).Range("A2:A4").copy
+        .Range("A2").PasteSpecial Paste:=xlPasteAll
+        .Range("2:2, 3:3, 4:4").Merge
+    End With
+End Sub
+
+Sub copyAll()
+    If ActiveSheet.AutoFilterMode Then ActiveSheet.AutoFilterMode = False
+    Dim wb1 As Workbook
+    Dim wb2 As Workbook
+    
+    Set wb1 = ActiveWorkbook
+    Set wb2 = ChooseFile()
+    
+    If Not wb2 Is Nothing Then
+        Call copyTitle(wb1, wb2)
+        Call copyData(wb1, wb2)
+    Else
+        MsgBox "No file selected"
+    End If
+    
+    Call openSAPf970
+    Call copyF970(wb1)
+    
+    wb1.Worksheets("Tabular Data").Activate
+    Call checkDifferences
+End Sub
+
+Sub checkDifferences()
+    Call formulas
+
+    Dim lastRow As Long
+    lastRow = ActiveSheet.Cells(Rows.Count, "A").End(xlUp).Row
+    
+    If Not hasDifferences(lastRow) Then
+        MsgBox "No differences", vbInformation
+    Else
+        applyFilter (lastRow)
+    End If
+
+    Range("O6").FormulaR1C1 = "Comment"
+End Sub
+
+Function hasDifferences(lastRow As Long) As Boolean
+    Dim cell As Range
+    hasDifferences = False
+    
+    If ActiveSheet.AutoFilterMode Then ActiveSheet.AutoFilterMode = False
+    
+    For Each cell In Range("M7:M" & lastRow)
+        If Not IsError(cell.Value) Then
+            If cell.Value <> 0 Then
+                hasDifferences = True
+                Exit Function
+            End If
+        End If
+    Next cell
+End Function
+
+Sub applyFilter(lastRow As Long)
+    If ActiveSheet.AutoFilterMode Then ActiveSheet.AutoFilterMode = False
+    ActiveSheet.Range("$A$6:$N$" & lastRow).AutoFilter Field:=13, _
+        Criteria1:="<>0", Criteria2:="<>#N/A", Operator:=xlAnd
+End Sub
+
+Sub openSAPf970()
+    Dim session As Object
+    Set session = GetSAPSession()
+    
+    session.findById("wnd[0]").maximize
+    session.findById("wnd[0]/tbar[0]/okcd").Text = "/nf970"
+    session.findById("wnd[0]").sendVKey 0
+    session.findById("wnd[0]/usr/ctxtS_BKKRS-LOW").Text = "Something"
+    session.findById("wnd[0]/usr/ctxtS_ACNUM-LOW").Text = "*"
+    session.findById("wnd[0]").sendVKey 0
+    session.findById("wnd[0]/tbar[1]/btn[8]").press
+    
+    session.findById("wnd[0]/mbar/menu[0]/menu[1]/menu[1]").Select
+    
+    session.findById("wnd[1]/usr/subSUB_CONFIGURATION:SAPLSALV_GUI_CUL_EXPORT_AS:0512/cmbGS_EXPORT-FORMAT").Key = "   8-TT"
+    
+    session.findById("wnd[1]/tbar[0]/btn[20]").press
+    session.findById("wnd[1]/tbar[0]/btn[0]").press
+    
+    session.findById("wnd[1]/usr/subSUBSCREEN_STEPLOOP:SAPLSPO5:0150/sub:SAPLSPO5:0150/radSPOPLI-SELFLAG[0,0]").Select
+    
+    session.findById("wnd[1]/tbar[0]/btn[0]").press
+    session.findById("wnd[1]/tbar[0]/btn[0]").press
+End Sub
+
+Sub copyF970(wb1 As Workbook)
+    On Error GoTo ErrorHandler
+
+    wb1.Sheets("F970").Cells.Clear
+    Workbooks("Worksheet in Basis (1)").Sheets(1).Range("A1").CurrentRegion.copy
+    
+    If Application.CutCopyMode = False Then
+        MsgBox "No data on the clipboard", vbExclamation
+        Exit Sub
+    End If
+    
+    wb1.Sheets("F970").Range("A1").PasteSpecial Paste:=xlPasteValues
+    wb1.Sheets("F970").Columns.AutoFit
+
+    MsgBox "Data was copied successfully", vbInformation
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error occurred: " & Err.Description, vbCritical
+End Sub
+
+Sub createFolderAndSaveFiles()
+    Dim folderPath As String, newFolderPath As String, currentDateFolder As String, currentDate As String, folderName As String
+    Dim fileName As String
+
+    currentDateFolder = Format(Date, "dd.mm.yyyy")
+    currentDate = Format(Date, "yyyy.mm.dd")
+    folderPath = "Path to company folder"
+    
+    folderName = InputBox("Enter folder name:", "Folder Name", currentDateFolder)
+    newFolderPath = folderPath & folderName
+
+    If createFolder(newFolderPath) Then
+        fileName = saveExcelFile(newFolderPath, currentDate)
+        PrintSelectedArea newFolderPath, currentDate
+        MsgBox "Files saved successfully in " & newFolderPath, vbInformation
+    Else
+        MsgBox "Failed to create folder!", vbCritical
+    End If
+End Sub
+
+Function createFolder(ByVal folderPath As String) As Boolean
+    On Error Resume Next
+    MkDir folderPath
+    createFolder = (Err.Number = 0)
+    Err.Clear
+    On Error GoTo 0
+End Function
+
+Function saveExcelFile(ByVal folderPath As String, ByVal currentDate As String) As String
+    Dim fileName As String
+    fileName = folderPath & "\" & InputBox("Enter Excel file name:", "File Name", "Title of control_" & currentDate & ".xlsx")
+    ActiveWorkbook.SaveAs fileName:=fileName, FileFormat:=xlOpenXMLWorkbook, CreateBackup:=False
+    saveExcelFile = fileName
+End Function
+
+Sub PrintSelectedArea(ByVal folderPath As String, ByVal currentDate As String)
+    Dim lastRow As Long, LastCol As Long, LastColLetter As String, fileName As String
+
+    lastRow = ActiveSheet.Cells(Rows.Count, "A").End(xlUp).Row
+    LastCol = ActiveSheet.Cells(6, Columns.Count).End(xlToLeft).Column
+    LastColLetter = Split(Cells(1, LastCol).Address, "$")(1)
+    
+    ActiveSheet.PageSetup.PrintArea = "$A$6:$" & LastColLetter & lastRow
+    With ActiveSheet.PageSetup
+        .Orientation = xlLandscape
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+        .Zoom = False
+    End With
+
+    fileName = folderPath & "\" & "Title of control_" & currentDate & ".pdf"
+    fileName = Application.GetSaveAsFilename(InitialFileName:=fileName, _
+                                              FileFilter:="PDF Files (*.pdf), *.pdf", _
+                                              Title:="Choose folder and file name")
+
+    If fileName <> "False" Then
+        ActiveSheet.ExportAsFixedFormat Type:=xlTypePDF, fileName:=fileName, _
+                                        Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+                                        IgnorePrintAreas:=False, OpenAfterPublish:=False
+    Else
+        MsgBox "No file selected for saving."
+    End If
+End Sub
+
+Function GetSAPSession() As Object
+    Dim SapGuiAuto As Object
+    Set SapGuiAuto = GetObject("SAPGUI")
+    Set GetSAPSession = SapGuiAuto.GetScriptingEngine.Children(0).Children(0)
+End Function
